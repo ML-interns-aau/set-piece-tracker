@@ -32,23 +32,41 @@ doc wins. This file summarizes them so an agent can act without re-reading every
 
 ## Current state (as of this writing)
 
-The repo holds an early **perception skeleton** and little else. Everything else in the
-design is unbuilt — do not assume a pipeline runner, catalog, calibration, key-moment
-detection, feature computation, reliability scoring, overlay renderer, verification
+The **Geometry & Moments plane (FR-007–011) is built and unit-tested**; the perception
+plane is a working skeleton; everything else in the design is still unbuilt — do not assume
+a pipeline runner, catalog, feature computation, reliability scoring, overlay-verification
 workflow, or exporters exist yet.
 
 ```
 src/
-├── __init__.py
-└── engine/
-    ├── detector.py          # FootballDetector — YOLO person+ball detection
-    ├── tracker.py           # FootballTracker  — ByteTrack multi-object tracking
-    └── team_classifier.py   # TeamClassifier   — team split + goalkeeper detection (FR-005)
+├── domain/               # pure types: Calibration, CalibrationTrack, KeyMoments, ProjectileFit, pitch model
+├── engine/               # perception skeleton (YOLO detect, ByteTrack, team+GK) — → will move to src/perception/
+│   ├── detector.py       # FootballDetector — YOLO person+ball detection
+│   ├── tracker.py        # FootballTracker  — ByteTrack multi-object tracking
+│   └── team_classifier.py# TeamClassifier   — team split + goalkeeper detection (FR-005)
+└── geometry/             # DONE: orientation, calibration, ball trajectory, key moments
+    ├── orientation.py         # FR-007 corner side + canonical normalization
+    ├── calibration.py         # pure DLT + hybrid line+point homography solver
+    ├── pnl_calibration.py     # FR-008 primary auto-calib: vendored PnLCalib model + per-frame CalibrationTrack
+    ├── auto_calibration.py    # FR-008 classical no-dependency fallback (fails safe)
+    ├── manual_calibration.py  # FR-008 interactive clickable fallback
+    ├── ball_smoother.py       # FR-009 Kalman + optical-flow pixel smoothing
+    ├── trajectory.py          # FR-009 projectile-model fit
+    └── key_moments.py         # FR-010/011 t_kick / t_contact off the ball speed signal
 ```
 
-> The current `src/engine/` grouping is a starting point, **not** the target layout.
-> New work should follow the clean-architecture structure below, and this skeleton
-> should be folded into it (`src/engine/*` → `src/perception/`).
+`scripts/demo_geometry.py` runs this plane end-to-end on one clip (see README). Tests in
+`tests/` cover calibration, orientation, trajectory, and key moments (`python -m pytest -q`).
+`third_party/PnLCalib/` is the vendored (GPL-2.0) calibration model; its weights are
+git-ignored (fetch with `scripts/fetch_pnlcalib_weights.sh`).
+
+**Known gaps in this plane:** key-moment detection runs off the ball signal only — the
+taker-foot cross-check (`t_kick`) and player-gating (`t_contact`) are stubbed pending the
+**I5 foot-point pipeline** (not built); monocular ball-height is unestimated (delivery-height
+metrics return `None`); detectors are validated on synthetic signals, not yet on real clips.
+
+> The `src/engine/` grouping is a starting point, **not** the target layout — it should fold
+> into `src/perception/` under the clean-architecture structure below.
 
 ## Goals & success metrics (targets pending ratification)
 
@@ -102,10 +120,22 @@ across all planes, so a failure or pending manual check on one clip never blocks
   edge at clip start → fixes left/right side. Normalize all positions to one canonical
   orientation so near-/far-post mean the same across clips. Manual override in the catalog.
 - **5.6 Penalty-area calibration (FR-008), net-new.** Corner footage never shows all four
-  pitch corners, so solve the homography from a subset of standard markings (penalty-area
-  corners, goal-area corners, goalposts 7.32 m apart, penalty spot 11 m, corner arc) —
-  any ≥ 4 give a well-conditioned correspondence to FIFA-standard metric coords. Manual
-  clickable-point fallback per clip. Reprojection error feeds the reliability score.
+  pitch corners, so we solve a pixel→metric homography from the visible standard markings.
+  Three tiers, all producing the same `Calibration` (I7): **(1) PnLCalib** — the primary
+  automatic path, a vendored learned HRNet keypoint/line model (`third_party/PnLCalib`,
+  GPL-2.0) wrapped by `src/geometry/pnl_calibration.py`; robust to the corner-kick player
+  wall. **(2) classical** `src/geometry/auto_calibration.py` — a no-dependency field-mask +
+  white-top-hat + line/arc detector kept as a fallback (fails safe → `None`). **(3) manual**
+  clickable points (`manual_calibration.py`). Reprojection error feeds the reliability score.
+  Empirical note (pilot): during a corner the defenders line up **on** the penalty-area
+  side lines, so classical detection of the *box sides* is unreliable — hence the learned
+  model. Both `auto_calibrate` and `pnl_calibrate` return `None` rather than emit a
+  low-confidence homography, so a bad frame routes to the manual fallback instead of
+  poisoning downstream positions. **Per-frame (camera pan/zoom):**
+  `pnl_calibration.build_calibration_track()` calibrates every frame (default) and returns
+  a `CalibrationTrack` with `.at(frame)`; a static clip collapses to one shared H, a large
+  inter-frame marking jump is flagged as a cut. Ball samples are mapped through the H for
+  *their* frame so trajectory/moments stay correct under a moving camera.
 - **5.7 Ball detection & trajectory (FR-009).** YOLO ball class + Kalman smoother
   (predicted-position flag, divergence guard via optical flow). Fit a projectile model
   (constant horizontal velocity, gravity-only vertical) anchored to the calibrated pitch
@@ -314,11 +344,13 @@ Contracts between planes; keep these stable. `player`/`ball` classes, pixel bbox
 
 ## Development
 
-- **Python 3.14** (`.venv/` present; `python 3.14.5`).
-- **Dependencies** (`requirements.txt`): `opencv-python-headless`, `numpy`,
-  `supervision`, `ultralytics`, `scikit-learn`.
+- **Python 3.14.** Runtime dependencies live in `requirements.txt`.
 - **YOLO weights:** code defaults to `yolo11m.pt`. Weights are not committed; the pilot
   phase (PRD Phase 2) decides which weights to standardize on before batch runs.
+- **PnLCalib (calibration) weights:** the vendored calibrator needs `SV_kp` + `SV_lines`
+  (~506 MB) in `third_party/PnLCalib/weights/` — git-ignored, download per
+  `third_party/README.md`. Its extra runtime deps (scipy, shapely, matplotlib, PyYAML) are
+  in `requirements.txt`; torch/torchvision are shared with perception.
 - **Key parameters** (proposed, pending pilot tuning): calibration ≥ 4 penalty-area/
   goal-area/goalpost/penalty-spot points; velocity window adaptive up to 2 s pre-kick;
   zone geometry per Appendix C (provisional). Perception thresholds (detection conf/NMS,
@@ -326,12 +358,14 @@ Contracts between planes; keep these stable. `player`/`ball` classes, pixel bbox
 - **Setup:**
   ```bash
   source .venv/bin/activate
-  pip install -r requirements.txt
+  pip install -r requirements-dev.txt          # core + pytest (fast; enough for geometry)
+  pip install -r requirements-perception.txt   # only when running YOLO on real clips (heavy)
   ```
-- There are **no tests, no CLI entry point, and no CI** yet. When adding them, unit-test
-  the pure logic (zone containment, projectile fit, reliability combination, correction
-  application) independent of any specific clip; validate end-to-end on 3–5 pilot clips
-  before batch scale.
+- **Tests:** `python -m pytest -q` (pure geometry/moments logic; no clip or weights
+  needed). There is **no batch/CLI pipeline runner or CI yet**; `scripts/demo_geometry.py`
+  runs the geometry & moments plane on a single clip. Keep unit-testing the pure logic
+  (zone containment, projectile fit, reliability combination, correction application)
+  independent of any specific clip; validate end-to-end on 3–5 pilot clips before batch scale.
 
 ## Working norms for this repo
 

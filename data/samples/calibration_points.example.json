@@ -1,0 +1,11 @@
+{
+  "_comment": "Pixel (u,v) locations of visible pitch markings in your calibration frame. Need >= 4. Valid names are the keys of REFERENCE_POINTS in src/domain/pitch.py. Read the pixel coords off the frame in any image viewer, then pass this file via --calib.",
+  "pixel_points": {
+    "near_post": [812, 430],
+    "far_post": [905, 250],
+    "goal_area_front_left": [700, 500],
+    "goal_area_front_right": [980, 300],
+    "pen_area_front_left": [610, 560],
+    "penalty_spot": [850, 360]
+  }
+}

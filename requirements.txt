@@ -1,5 +1,29 @@
-opencv-python-headless
-numpy
-supervision
-ultralytics
-scikit-learn
+# All project dependencies in one file.
+#
+# Versions are pinned to what is already in the local pip cache (Python 3.14) so
+# `pip install -r requirements.txt` resolves OFFLINE instead of re-downloading the
+# latest torch/CUDA. `ultralytics` pulls `torch`, which on Linux pulls the NVIDIA
+# CUDA stack (several GB). On a non-GPU machine, install CPU torch first to skip it:
+#   pip install torch==2.11.0 torchvision==0.26.0 --index-url https://download.pytorch.org/whl/cpu
+
+# core (domain + geometry & moments plane)
+numpy==2.4.4
+opencv-python-headless==4.13.0.92
+
+# perception (YOLO detection, tracking, team/GK clustering)
+supervision==0.27.0.post2
+scikit-learn==1.8.0
+ultralytics==8.4.42
+torch==2.11.0
+torchvision==0.26.0
+
+# calibration (vendored PnLCalib model — third_party/PnLCalib, GPL-2.0)
+# torch/torchvision above are reused; these are the extra deps its inference needs.
+scipy==1.18.0
+shapely==2.1.2
+matplotlib==3.11.0
+PyYAML==6.0.3
+tqdm==4.68.4
+
+# tests
+pytest==9.1.1
