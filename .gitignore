@@ -1,1 +1,27 @@
 .venv
+
+# model weights (not committed; see CLAUDE.md)
+*.pt
+# vendored PnLCalib HRNet weights (~506 MB; download separately, see third_party/PnLCalib)
+third_party/PnLCalib/weights/
+
+# python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+
+# generated outputs
+outputs/
+
+# footage / extracted frames stay local (privacy; see CLAUDE.md)
+*.mp4
+*.mov
+*.mkv
+*.avi
+*.jpg
+*.jpeg
+*.png
+
+.csv
+
