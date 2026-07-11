@@ -34,18 +34,23 @@ Two sets of weights are needed and are **git-ignored** (too large to commit):
 ## Run the geometry & moments demo on one clip
 
 ```bash
-python scripts/demo_geometry.py --clip data/raw/clips/<CLIP>.mp4 --pnl --overlay
+python scripts/demo_geometry.py --clip data/raw/clips/<CLIP>.mp4 --overlay
 ```
 
-- `--pnl` — per-frame calibration with the PnLCalib model (robust to the corner-kick
-  player wall; needs the weights above). This is the recommended path.
+Calibration is always the vendored **PnLCalib** model (per-frame, robust to the
+corner-kick player wall; needs the weights above) — it is the sole calibration path, so
+there is no flag to select it and no classical/manual fallback. Useful flags:
+
 - `--overlay` — write `overlay.mp4` with the pitch markings + ball trail + `t_kick`/
   `t_contact` markers burned in.
-- On a GPU box add `--device cuda:0` (per-frame calibration + YOLO both run every frame,
-  so CPU is slow — use `--max-frames 40` for a quick look).
+- `--device 0` — run YOLO ball detection on the GPU (default `cpu`). PnLCalib
+  **auto-selects the GPU** when CUDA is available, independent of this flag.
 - `--no-detect` — calibrate + draw the overlay only, skip YOLO ball detection.
-- `--auto` — classical (no-weights) calibration fallback; `--click` — place points by hand;
-  `--calib points.json` — reuse saved points.
+- `--max-frames N` — cap frames processed. Per-frame calibration + YOLO run on every
+  frame, so on CPU use e.g. `--max-frames 40` for a quick look.
+- `--frame N` — frame used for the reported corner side + calibration summary (default 0).
+- `--conf F` — YOLO ball-detection confidence (default 0.25); `--out DIR` — output
+  directory (default `outputs/demo`).
 
 Outputs land in `outputs/demo/` (git-ignored):
 - `overlay.mp4` — **watch this**: the cyan pitch markings should stay glued to the real
@@ -61,14 +66,16 @@ Outputs land in `outputs/demo/` (git-ignored):
 python -m pytest -q
 ```
 
-Pure geometry/moments logic (calibration solver, orientation, trajectory fit, key-moment
-detection) — no clip or weights needed.
+Pure geometry/moments logic (homography application, orientation, trajectory fit,
+key-moment detection) — no clip or weights needed. The PnLCalib calibration model itself
+needs torch + weights and is not exercised by this suite.
 
 ## Status & where to pick up
 
 **Done — Geometry & Moments plane (FR-007–011):** corner-side/orientation, penalty-area
-calibration (per-frame PnLCalib + classical + manual, all → one `Calibration`), ball
-smoothing + projectile trajectory fit, and `t_kick`/`t_contact` detection. Unit-tested.
+calibration (the vendored **PnLCalib** learned model is the sole path → a per-frame
+`CalibrationTrack` that tracks camera pan/zoom), ball smoothing + projectile trajectory
+fit, and `t_kick`/`t_contact` detection. Unit-tested (except the PnLCalib model itself).
 
 **Next (see `CLAUDE.md` for the plan):** the **I5 foot-point pipeline** (per-frame player
 foot points) — it unblocks the taker-foot cross-check for `t_kick`, player-gating for
