@@ -46,7 +46,7 @@ src/
 │   └── team_classifier.py# TeamClassifier   — team split + goalkeeper detection (FR-005)
 └── geometry/             # DONE: orientation, calibration, ball trajectory, key moments
     ├── orientation.py         # FR-007 corner side + canonical normalization
-    ├── calibration.py         # pure DLT + hybrid line+point homography solver
+    ├── calibration.py         # pure apply_homography helper (map pixels -> metric)
     ├── pnl_calibration.py     # FR-008 sole calibration path: vendored PnLCalib model + per-frame CalibrationTrack
     ├── ball_smoother.py       # FR-009 Kalman + optical-flow pixel smoothing
     ├── trajectory.py          # FR-009 projectile-model fit
