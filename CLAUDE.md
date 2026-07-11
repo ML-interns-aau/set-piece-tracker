@@ -47,9 +47,7 @@ src/
 └── geometry/             # DONE: orientation, calibration, ball trajectory, key moments
     ├── orientation.py         # FR-007 corner side + canonical normalization
     ├── calibration.py         # pure DLT + hybrid line+point homography solver
-    ├── pnl_calibration.py     # FR-008 primary auto-calib: vendored PnLCalib model + per-frame CalibrationTrack
-    ├── auto_calibration.py    # FR-008 classical no-dependency fallback (fails safe)
-    ├── manual_calibration.py  # FR-008 interactive clickable fallback
+    ├── pnl_calibration.py     # FR-008 sole calibration path: vendored PnLCalib model + per-frame CalibrationTrack
     ├── ball_smoother.py       # FR-009 Kalman + optical-flow pixel smoothing
     ├── trajectory.py          # FR-009 projectile-model fit
     └── key_moments.py         # FR-010/011 t_kick / t_contact off the ball speed signal
@@ -121,17 +119,16 @@ across all planes, so a failure or pending manual check on one clip never blocks
   orientation so near-/far-post mean the same across clips. Manual override in the catalog.
 - **5.6 Penalty-area calibration (FR-008), net-new.** Corner footage never shows all four
   pitch corners, so we solve a pixel→metric homography from the visible standard markings.
-  Three tiers, all producing the same `Calibration` (I7): **(1) PnLCalib** — the primary
-  automatic path, a vendored learned HRNet keypoint/line model (`third_party/PnLCalib`,
-  GPL-2.0) wrapped by `src/geometry/pnl_calibration.py`; robust to the corner-kick player
-  wall. **(2) classical** `src/geometry/auto_calibration.py` — a no-dependency field-mask +
-  white-top-hat + line/arc detector kept as a fallback (fails safe → `None`). **(3) manual**
-  clickable points (`manual_calibration.py`). Reprojection error feeds the reliability score.
-  Empirical note (pilot): during a corner the defenders line up **on** the penalty-area
-  side lines, so classical detection of the *box sides* is unreliable — hence the learned
-  model. Both `auto_calibrate` and `pnl_calibrate` return `None` rather than emit a
-  low-confidence homography, so a bad frame routes to the manual fallback instead of
-  poisoning downstream positions. **Per-frame (camera pan/zoom):**
+  The sole path produces a `Calibration` (I7) from **PnLCalib** — a vendored learned HRNet
+  keypoint/line model (`third_party/PnLCalib`, GPL-2.0) wrapped by
+  `src/geometry/pnl_calibration.py`; robust to the corner-kick player wall. Its ~506 MB
+  weights auto-download on first use if missing (`scripts/fetch_pnlcalib_weights.sh`).
+  Reprojection error feeds the reliability score. Empirical note (pilot): during a corner
+  the defenders line up **on** the penalty-area side lines, so classical detection of the
+  *box sides* is unreliable — hence the learned model (the earlier classical/manual
+  fallbacks were removed once PnLCalib proved sufficient). `pnl_calibrate` returns `None`
+  rather than emit a low-confidence homography, so a bad frame is flagged for manual review
+  instead of poisoning downstream positions. **Per-frame (camera pan/zoom):**
   `pnl_calibration.build_calibration_track()` calibrates every frame (default) and returns
   a `CalibrationTrack` with `.at(frame)`; a static clip collapses to one shared H, a large
   inter-frame marking jump is flagged as a cut. Ball samples are mapped through the H for

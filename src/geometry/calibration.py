@@ -6,8 +6,7 @@ corners, goalposts, penalty spot, corner arcs) -- any >= 4 give a
 well-conditioned correspondence to known metric coordinates (FR-008).
 
 The solver is a normalized DLT implemented in pure numpy, so it unit-tests
-without OpenCV. The interactive manual fallback lives in ``manual_calibration``
-(it needs a cv2 window).
+without OpenCV.
 """
 
 from __future__ import annotations

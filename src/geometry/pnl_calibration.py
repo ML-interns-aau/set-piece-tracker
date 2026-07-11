@@ -1,7 +1,7 @@
 """PnLCalib adapter: learned pitch calibration -> our Calibration (FR-008, I7).
 
 Corner-kick footage packs defenders onto the penalty-area lines, so classical
-line/marking detection (see ``auto_calibration``) cannot recover the box. The
+line/marking detection cannot recover the box. The
 vendored PnLCalib model (``third_party/PnLCalib``, HRNet keypoint + line
 detection) is robust to that clutter: it localises pitch keypoints across the
 whole field and solves a camera model, from which we take the ground-plane
@@ -11,8 +11,7 @@ This module is the *impure edge*: it pulls in torch and the vendored (GPL-2.0)
 PnLCalib code lazily, so the pure geometry/domain packages stay importable
 without those heavy dependencies. Its output is converted into our own
 ``Calibration`` in the ``pitch.py`` metric convention (analysed goal at x = 0),
-identical to what ``calibration``/``auto_calibration`` produce, so nothing
-downstream needs to know which calibrator was used.
+so nothing downstream needs to know how the homography was produced.
 
 Setup (not committed): the ~506 MB weights live in ``third_party/PnLCalib/weights``
 (``SV_kp``, ``SV_lines``); see ``third_party/PnLCalib/README.md``. Requires torch,
@@ -34,8 +33,10 @@ from src.domain.pitch import (
     _CENTRE_Y,
 )
 
-_PNL_DIR = Path(__file__).resolve().parents[2] / "third_party" / "PnLCalib"
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+_PNL_DIR = _REPO_ROOT / "third_party" / "PnLCalib"
 _WEIGHTS_DIR = _PNL_DIR / "weights"
+_FETCH_SCRIPT = _REPO_ROOT / "scripts" / "fetch_pnlcalib_weights.sh"
 
 # PnLCalib's published single-view detection thresholds.
 KP_THRESHOLD = 0.3434
@@ -46,6 +47,45 @@ LINE_THRESHOLD = 0.7867
 MAX_REPROJ_PX = 30.0
 
 _models: tuple | None = None  # lazy singleton: (model_kp, model_line, pnl_inference_module, device)
+
+
+def _weights_present() -> bool:
+    """True when both PnLCalib weight files are on disk."""
+    return (_WEIGHTS_DIR / "SV_kp").exists() and (_WEIGHTS_DIR / "SV_lines").exists()
+
+
+def _ensure_weights() -> None:
+    """Guarantee the PnLCalib weights exist, downloading them if they don't.
+
+    PnLCalib is the only calibration path, so a missing weight is a hard blocker.
+    When either weight file is absent we run the vendored fetch script
+    (``scripts/fetch_pnlcalib_weights.sh``, idempotent) to download SV_kp + SV_lines
+    (~506 MB) from the PnLCalib v1.0.0 release, then re-check. Raises if the script
+    is missing or the download did not produce the weights.
+    """
+    if _weights_present():
+        return
+
+    import subprocess
+
+    if not _FETCH_SCRIPT.exists():
+        raise FileNotFoundError(
+            f"PnLCalib weights not found in {_WEIGHTS_DIR} and the fetch script "
+            f"{_FETCH_SCRIPT} is missing. Download SV_kp and SV_lines from the PnLCalib "
+            "v1.0.0 GitHub release (see third_party/PnLCalib/README.md)."
+        )
+
+    print(
+        f"PnLCalib weights missing in {_WEIGHTS_DIR} -- running "
+        f"{_FETCH_SCRIPT.name} to download them (~506 MB, one time) ..."
+    )
+    subprocess.run(["bash", str(_FETCH_SCRIPT)], check=True)
+
+    if not _weights_present():
+        raise FileNotFoundError(
+            f"PnLCalib weights still missing in {_WEIGHTS_DIR} after running "
+            f"{_FETCH_SCRIPT.name}. Check the script output above / network access."
+        )
 
 
 def _load_models() -> tuple:
@@ -59,11 +99,7 @@ def _load_models() -> tuple:
     import torch
     import torchvision.transforms as T
 
-    if not (_WEIGHTS_DIR / "SV_kp").exists() or not (_WEIGHTS_DIR / "SV_lines").exists():
-        raise FileNotFoundError(
-            f"PnLCalib weights not found in {_WEIGHTS_DIR}. Download SV_kp and SV_lines "
-            "from the PnLCalib v1.0.0 GitHub release (see third_party/PnLCalib/README.md)."
-        )
+    _ensure_weights()
     if str(_PNL_DIR) not in sys.path:
         sys.path.insert(0, str(_PNL_DIR))
 
