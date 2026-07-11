@@ -12,9 +12,9 @@ stay clearly separated from our own code.
   solver. Given a broadcast soccer frame it localises pitch keypoints and solves
   a full camera model.
 - **Why it's here:** corner-kick footage packs defenders directly onto the
-  penalty-area lines, so classical marking detection (`src/geometry/auto_calibration.py`)
-  cannot recover the box. PnLCalib is robust to that occlusion. We use it as the
-  primary automatic calibrator via the adapter `src/geometry/pnl_calibration.py`,
+  penalty-area lines, so classical marking detection cannot recover the box.
+  PnLCalib is robust to that occlusion. We use it as the sole calibrator via the
+  adapter `src/geometry/pnl_calibration.py`,
   which converts its output into our `Calibration` (interface I7) in the
   `pitch.py` metric convention.
 

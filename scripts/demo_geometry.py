@@ -12,19 +12,19 @@ Pipeline it runs:
          -> key moments (t_kick / t_contact) -> projectile trajectory fit
     -> prints a summary and writes ball_track.csv + summary.json (+ optional overlay.mp4)
 
-Calibration modes:
-    --auto               auto-detect white pitch markings and calibrate (no GUI)
-    --calib points.json  hand-measured / previously-clicked pixel points (no GUI)
-    --click              click the markings on the calibration frame (needs a display)
+Calibration is always the vendored PnLCalib model (SoccerNet HRNet keypoint/line
+detection) -- robust to the corner-kick player wall -- producing a per-frame
+CalibrationTrack that tracks camera pan/zoom. If the ~506 MB weights are missing they
+are downloaded automatically on first use (scripts/fetch_pnlcalib_weights.sh).
 
 Ball detection needs torch+ultralytics + yolo11m.pt. Use --no-detect to skip it
-(corner side [+ calibration] only).
+(corner side + PnLCalib calibration only).
 
 Examples:
-    # auto-calibrate + overlay (no GUI, no torch)
-    python scripts/demo_geometry.py --clip data/raw/clips/XXXX.mp4 --auto --overlay
-    # full geometry, calibrating by clicking markings on the first frame
-    python scripts/demo_geometry.py --clip data/raw/clips/XXXX.mp4 --click --overlay
+    # per-frame PnLCalib calibration + overlay, first 40 frames
+    python scripts/demo_geometry.py --clip data/raw/clips/XXXX.mp4 --overlay --max-frames 40
+    # calibration only (no ball detection)
+    python scripts/demo_geometry.py --clip data/raw/clips/XXXX.mp4 --no-detect --overlay
 """
 
 from __future__ import annotations
@@ -73,48 +73,6 @@ def read_frame(cap: cv2.VideoCapture, index: int) -> np.ndarray:
     return frame
 
 
-def load_calibration(args, calib_frame: np.ndarray, out_dir: Path) -> Calibration | None:
-    """Return a single-frame Calibration from --calib / --click / --auto, or None.
-
-    (--pnl builds a per-frame CalibrationTrack in main(), not here.)
-    """
-    if args.calib:
-        from src.geometry.manual_calibration import calibration_from_saved
-        return calibration_from_saved(args.calib)
-    if args.click:
-        from src.geometry.manual_calibration import manual_calibrate
-        return manual_calibrate(calib_frame, save_path=out_dir / "points.json")
-    if args.auto:
-        from src.geometry.auto_calibration import auto_calibrate_detailed
-        calib, info = auto_calibrate_detailed(calib_frame)
-        if info.get("field_mask") is not None:
-            cv2.imwrite(str(out_dir / "field_mask.png"), info["field_mask"])
-        if info.get("edge_mask") is not None:
-            cv2.imwrite(str(out_dir / "edge_mask.png"), info["edge_mask"])
-        _save_auto_debug(calib_frame, info, out_dir)
-        if calib is not None:
-            print(f"auto-calib : consistency={info['consistency_m']:.2f} m "
-                  f"reproj={info['reprojection_error_m']:.2f} m")
-        else:
-            print("auto-calib : classical detection could not calibrate this frame "
-                  "(occluded box is expected on corners; try --pnl or --click)")
-        return calib
-    return None
-
-
-def _save_auto_debug(frame: np.ndarray, info: dict, out_dir: Path) -> None:
-    """Draw the classical auto-calibration's detected lines + arc for inspection."""
-    dbg = frame.copy()
-    for i, ln in enumerate(sorted(info.get("longitudinal", []), key=lambda l: l[5], reverse=True)[:3]):
-        col = [(0, 0, 255), (0, 128, 255), (255, 0, 0)][i % 3]
-        cv2.line(dbg, (int(ln[0]), int(ln[1])), (int(ln[2]), int(ln[3])), col, 2)
-    if info.get("arc_ellipse") is not None:
-        cv2.ellipse(dbg, info["arc_ellipse"], (255, 0, 255), 2)
-    for (u, v), _m in (info.get("point_corr") or []):
-        cv2.circle(dbg, (int(u), int(v)), 7, (255, 0, 255), -1)
-    cv2.imwrite(str(out_dir / "debug_lines.png"), dbg)
-
-
 def detect_ball_track(cap, device, conf, max_frames=0):
     """Detect + smooth the ball across the clip -> list of (frame_idx, u, v, predicted)."""
     from src.engine.detector import FootballDetector  # lazy: needs torch/ultralytics
@@ -148,10 +106,6 @@ def detect_ball_track(cap, device, conf, max_frames=0):
 def main() -> None:
     ap = argparse.ArgumentParser(description="Run the geometry & moments plane on one clip.")
     ap.add_argument("--clip", required=True, help="path to a corner-kick clip")
-    ap.add_argument("--calib", help="JSON of pixel points for calibration (no GUI)")
-    ap.add_argument("--click", action="store_true", help="click markings interactively (needs GUI)")
-    ap.add_argument("--auto", action="store_true", help="auto-detect pitch markings and calibrate (classical, no weights)")
-    ap.add_argument("--pnl", action="store_true", help="calibrate with vendored PnLCalib model (robust to player occlusion; needs torch + weights)")
     ap.add_argument("--frame", type=int, default=0, help="frame index for calibration + corner side")
     ap.add_argument("--no-detect", action="store_true", help="skip ball detection (no torch needed)")
     ap.add_argument("--device", default="cpu", help="YOLO device (cpu / 0 / cuda:0)")
@@ -180,29 +134,25 @@ def main() -> None:
     print(f"corner    : {side.corner_side.value}  (source={side.side_source.value}, "
           f"confidence={side.confidence}) -- confirm/override if low")
 
-    # --- calibration (Task 2), optional ---
-    # --pnl builds a per-frame CalibrationTrack (handles camera pan/zoom); the other
-    # modes give one fixed homography for the clip.
-    calib_track = None
-    if args.pnl:
-        from src.geometry.pnl_calibration import build_calibration_track
-        upper = args.max_frames if args.max_frames else n_frames
-        calib_track = build_calibration_track(clip_path, frame_indices=range(upper))
-        calib = calib_track.at(args.frame) if calib_track is not None else None
-        if calib_track is None:
-            print("pnl-calib  : model could not calibrate any frame (try --click)")
-        else:
-            extra = (f"  discontinuities={calib_track.discontinuity_frames}"
-                     if calib_track.discontinuity_frames else "")
-            print(f"pnl-calib  : per-frame track  static={calib_track.static}  "
-                  f"frames={len(calib_track.per_frame)}  "
-                  f"mean_reproj={calib_track.mean_reprojection_error_m:.3f} m{extra}")
+    # --- calibration (Task 2): always PnLCalib, per-frame ---
+    # PnLCalib is the only calibration path -- the vendored SoccerNet HRNet model, robust
+    # to the corner-kick player wall. It builds a per-frame CalibrationTrack (handles
+    # camera pan/zoom). Weights are downloaded automatically on first use if missing.
+    from src.geometry.pnl_calibration import build_calibration_track
+    upper = args.max_frames if args.max_frames else n_frames
+    calib_track = build_calibration_track(clip_path, frame_indices=range(upper))
+    calib = calib_track.at(args.frame) if calib_track is not None else None
+    if calib_track is None:
+        print("pnl-calib  : model could not calibrate any frame")
     else:
-        calib = load_calibration(args, calib_frame, out_dir)
+        extra = (f"  discontinuities={calib_track.discontinuity_frames}"
+                 if calib_track.discontinuity_frames else "")
+        print(f"pnl-calib  : per-frame track  static={calib_track.static}  "
+              f"frames={len(calib_track.per_frame)}  "
+              f"mean_reproj={calib_track.mean_reprojection_error_m:.3f} m{extra}")
 
     if calib is None and calib_track is None:
-        print("calibration: none -- metric mapping, key moments & trajectory skipped "
-              "(pass --pnl / --calib / --click to enable them)")
+        print("calibration: none -- metric mapping, key moments & trajectory skipped")
     elif calib is not None:
         print(f"calibration: reprojection_error={calib.reprojection_error_m:.3f} m  "
               f"points_used={calib.points_used}  source={calib.source.value}")
