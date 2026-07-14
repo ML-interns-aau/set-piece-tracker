@@ -1,0 +1,62 @@
+<title>Set Piece Tracker - Manual Verification</title>
+<link rel="stylesheet" href="/static/style.css">
+
+<header>
+  <h1>Manual Verification</h1>
+  <label>
+    Clip:
+    <select id="clip-select"></select>
+  </label>
+  <label>
+    Reviewer:
+    <input id="reviewer" type="text" value="manual" size="10">
+  </label>
+</header>
+
+<main>
+  <section class="videos">
+    <div class="video-pane">
+      <h2>Original</h2>
+      <video id="video-original" muted></video>
+    </div>
+    <div class="video-pane">
+      <h2>Annotated</h2>
+      <video id="video-overlay" muted></video>
+    </div>
+  </section>
+
+  <section class="controls">
+    <button id="btn-play">Play / Pause (Space)</button>
+    <button id="btn-prev-frame">&laquo; Frame (Left)</button>
+    <button id="btn-next-frame">Frame &raquo; (Right)</button>
+    <button id="btn-prev-event">Previous Event</button>
+    <button id="btn-next-event">Next Event</button>
+    <label>
+      Jump to event:
+      <select id="event-select"></select>
+    </label>
+    <label>
+      Speed:
+      <select id="speed-select">
+        <option value="0.25">0.25x</option>
+        <option value="0.5">0.5x</option>
+        <option value="1" selected>1x</option>
+        <option value="1.5">1.5x</option>
+        <option value="2">2x</option>
+      </select>
+    </label>
+  </section>
+
+  <section class="verdicts">
+    <button id="btn-verified" class="verdict verdict-confirm">Verified (V)</button>
+    <button id="btn-rejected" class="verdict verdict-reject">Rejected (R)</button>
+    <button id="btn-edit" class="verdict verdict-edit">Needs Correction (E)</button>
+  </section>
+
+  <section class="metadata">
+    <h2>Event metadata</h2>
+    <dl id="metadata-panel"></dl>
+  </section>
+</main>
+
+<script src="/static/app.js"></script>
