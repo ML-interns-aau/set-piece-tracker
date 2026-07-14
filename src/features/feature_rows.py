@@ -35,15 +35,12 @@ from src.features.zones import ZONES, ZoneModel
 def _is_att(p: PlayerPosition) -> bool:
     return p.team == Team.ATTACKING
 
-
 def _is_def(p: PlayerPosition) -> bool:
     return p.team == Team.DEFENDING
-
 
 def _is_def_outfield(p: PlayerPosition) -> bool:
     """Defending player that is not the goalkeeper (for the excl.-GK counts)."""
     return p.team == Team.DEFENDING and not p.is_goalkeeper
-
 
 def build_feature_row(
     positions: Iterable[PlayerPosition],

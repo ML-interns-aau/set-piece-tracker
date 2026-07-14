@@ -66,9 +66,10 @@ Outputs land in `outputs/demo/` (git-ignored):
 python -m pytest -q
 ```
 
-Pure geometry/moments logic (homography application, orientation, trajectory fit,
-key-moment detection) — no clip or weights needed. The PnLCalib calibration model itself
-needs torch + weights and is not exercised by this suite.
+Pure logic — no clip or weights needed: geometry/moments (homography application,
+orientation, trajectory fit, key-moment detection) **and** the features & reliability
+plane (zone containment, the 13-feature computation, reliability scoring). The PnLCalib
+calibration model itself needs torch + weights and is not exercised by this suite.
 
 ## Status & where to pick up
 
@@ -77,9 +78,14 @@ calibration (the vendored **PnLCalib** learned model is the sole path → a per-
 `CalibrationTrack` that tracks camera pan/zoom), ball smoothing + projectile trajectory
 fit, and `t_kick`/`t_contact` detection. Unit-tested (except the PnLCalib model itself).
 
+**Done — Features & Reliability plane (FR-012–016), pure logic** (`src/features/`): the
+versioned zone model (Appendix C polygons, provisional zones flagged), the 13-feature
+computation (Appendix A schema), and per-position reliability scoring (which grades
+extrapolated positions gracefully rather than zeroing them). Fully unit-tested; it runs on
+`PlayerPosition` records, so it waits on the **I10** producer below to feed it real clips.
+
 **Next (see `CLAUDE.md` for the plan):** the **I5 foot-point pipeline** (per-frame player
 foot points) — it unblocks the taker-foot cross-check for `t_kick`, player-gating for
-`t_contact`, and **I10** (player positions/velocities at the moments), which the features
-and reliability planes build on. Then zones + the 13 features, overlay verification, and
-batch export. Monocular ball-height estimation is still open (delivery-height metrics
-return `None` until then).
+`t_contact`, and **I10** (player positions/velocities at the moments) that feeds the
+features plane above. Then overlay verification and batch export. Monocular ball-height
+estimation is still open (delivery-height metrics return `None` until then).
