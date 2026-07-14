@@ -1,4 +1,14 @@
 .venv
+.env
+.env.*
+
+# editor / OS
+.vscode/
+Thumbs.db
+Desktop.ini
+
+# logs
+*.log
 
 # model weights (not committed; see CLAUDE.md)
 *.pt
