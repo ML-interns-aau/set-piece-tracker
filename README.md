@@ -128,18 +128,18 @@ weights and is not exercised by this suite.
 
 ## Status & where to pick up
 
-**Done — Geometry & Moments plane (FR-007–011):** corner-side/orientation, penalty-area
+** — Geometry & Moments plane (FR-007–011):** corner-side/orientation, penalty-area
 calibration (the vendored **PnLCalib** learned model is the sole path → a per-frame
 `CalibrationTrack` that tracks camera pan/zoom), ball smoothing + projectile trajectory
 fit, and `t_kick`/`t_contact` detection. Unit-tested (except the PnLCalib model itself).
 
-**Done — Features & Reliability plane (FR-012–016), pure logic** (`src/features/`): the
+** — Features & Reliability plane (FR-012–016), pure logic** (`src/features/`): the
 versioned zone model (Appendix C polygons, provisional zones flagged), the 13-feature
 computation (Appendix A schema), and per-position reliability scoring (which grades
 extrapolated positions gracefully rather than zeroing them). Fully unit-tested; it runs on
 `PlayerPosition` records, so it waits on the **I10** producer below to feed it real clips.
 
-**Done — Verification plane (FR-017–019), `src/verification/`:** overlay rendering
+**— Verification plane (FR-017–019), `src/verification/`:** overlay rendering
 (team-colored + GK-highlighted boxes, zone overlays, burned-in event markers), a
 stdlib-only local web app for manual review (side-by-side video, keyboard shortcuts,
 verdict logging with resume), and a correction-file system (frame-indexed
@@ -148,9 +148,4 @@ plane operates on its own event vocabulary (`src/verification/events.py`) bridge
 the real `t_kick`/`t_contact` key moments today; it does not yet have a real
 shot/pass/header/etc. event-detection stage to consume (see that module's docstring).
 
-**Next (see `CLAUDE.md` for the plan):** the **I5 foot-point pipeline** (per-frame player
-foot points) — it unblocks the taker-foot cross-check for `t_kick`, player-gating for
-`t_contact`, and **I10** (player positions/velocities at the moments) that feeds the
-features plane above and, downstream, the events this verification plane reviews. Then
-batch export. Monocular ball-height estimation is still open (delivery-height metrics
-return `None` until then).
+
