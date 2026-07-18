@@ -58,10 +58,18 @@ src/
 `third_party/PnLCalib/` is the vendored (GPL-2.0) calibration model; its weights are
 git-ignored (fetch with `scripts/fetch_pnlcalib_weights.sh`).
 
-**Known gaps in this plane:** key-moment detection runs off the ball signal only — the
-taker-foot cross-check (`t_kick`) and player-gating (`t_contact`) are stubbed pending the
-**I5 foot-point pipeline** (not built); monocular ball-height is unestimated (delivery-height
-metrics return `None`); detectors are validated on synthetic signals, not yet on real clips.
+**Known gaps in this plane:** key-moment detection on tracks ≥ 25 frames uses
+ELASTIC-style detectors (`detect_t_kick_elastic`/`detect_t_contact_elastic` in
+`key_moments.py` — a numpy port of the vendored `third_party/ELASTIC` reference, MPL-2.0:
+smoothed vector-acceleration candidates + player-proximity gates + weighted scoring;
+`src/geometry/signal.py` supplies scipy-free `savgol_filter`/`find_peaks`), with the
+original threshold detectors as short-track/no-candidate fallback, and
+`scripts/demo_geometry.py` feeds them a same-frame nearest-player distance — but that's
+not the full **I5 foot-point pipeline** (interpolation/extrapolation across detection
+gaps, `gap_frames` provenance), which is still not built; monocular ball-height is
+unestimated (delivery-height metrics return `None`; ELASTIC's ball-height gate is
+correspondingly skipped); detectors are validated on synthetic corner scenarios
+(noise/deflection/near-miss/glitch cases), not yet on real clips.
 
 > The `src/engine/` grouping is a starting point, **not** the target layout — it should fold
 > into `src/perception/` under the clean-architecture structure below.

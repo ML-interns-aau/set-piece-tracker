@@ -52,7 +52,7 @@ from src.domain.pitch import (
 )
 from src.geometry.calibration import apply_homography
 from src.geometry.ball_smoother import BallSmoother
-from src.geometry.key_moments import detect_key_moments
+from src.geometry.key_moments import detect_key_moments, min_player_distance, smooth_signal
 from src.geometry.orientation import detect_corner_side, to_canonical
 from src.geometry.trajectory import reconstruct_trajectory
 
@@ -74,12 +74,20 @@ def read_frame(cap: cv2.VideoCapture, index: int) -> np.ndarray:
 
 
 def detect_ball_track(cap, device, conf, max_frames=0):
-    """Detect + smooth the ball across the clip -> list of (frame_idx, u, v, predicted)."""
+    """Detect + smooth the ball across the clip -> list of (frame_idx, u, v, predicted),
+    plus a per-frame dict of player foot points (pixel bottom-center of each player
+    bbox) for the taker-foot / contact-gating cross-checks in key-moment detection.
+
+    Runs YOLO once per frame and splits person/ball classes ourselves -- the old
+    ``detector.detect_ball`` call ran the same detection internally and discarded
+    the person boxes it already computed.
+    """
     from src.engine.detector import FootballDetector  # lazy: needs torch/ultralytics
 
     detector = FootballDetector(model_path="yolo11m.pt", conf=conf, device=device)
     smoother = BallSmoother()
     track: list[tuple[int, float, float, bool]] = []
+    player_feet_px: dict[int, list[tuple[float, float]]] = {}
     started = False
 
     cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
@@ -90,7 +98,9 @@ def detect_ball_track(cap, device, conf, max_frames=0):
         ok, frame = cap.read()
         if not ok:
             break
-        balls = detector.detect_ball(frame)
+        detections = detector.detect(frame)
+        balls = detections[detections.class_id == 32]
+        players = detections[detections.class_id == 0]
         bbox = None
         if len(balls) > 0:
             best = int(np.argmax(balls.confidence))
@@ -99,8 +109,9 @@ def detect_ball_track(cap, device, conf, max_frames=0):
         started = started or (bbox is not None)
         if started:
             track.append((idx, cx, cy, predicted))
+            player_feet_px[idx] = [((x1 + x2) / 2.0, y2) for x1, _, x2, y2 in players.xyxy]
         idx += 1
-    return track
+    return track, player_feet_px
 
 
 def main() -> None:
@@ -182,7 +193,7 @@ def main() -> None:
 
     # --- ball detection + smoothing (perception; needs torch) ---
     try:
-        px_track = detect_ball_track(cap, args.device, args.conf, args.max_frames)
+        px_track, player_feet_px = detect_ball_track(cap, args.device, args.conf, args.max_frames)
     except ImportError as e:
         cap.release()
         raise SystemExit(
@@ -215,16 +226,49 @@ def main() -> None:
         metric_track = [(frame_ids[i], float(metric[i, 0]), float(metric[i, 1]))
                         for i in range(len(frame_ids))]
 
+        # --- nearest-player distance per frame (taker-foot / contact-gating cross-check) ---
+        # Same-frame nearest-player distance only -- this is not the full I5
+        # gap-bridging pipeline (no interpolation/extrapolation across detection
+        # gaps), just enough to exercise the new key-moment gating on real footage.
+        player_feet_metric: list[list[tuple[float, float]]] = []
+        for fid in frame_ids:
+            feet_px = np.array(player_feet_px.get(fid, []), dtype=np.float64).reshape(-1, 2)
+            if len(feet_px) == 0:
+                player_feet_metric.append([])
+                continue
+            H = (calib_track.at(fid) or calib).H if calib_track is not None else calib.H
+            mapped_feet = to_canonical(apply_homography(H, feet_px), side.corner_side)
+            player_feet_metric.append([tuple(p) for p in mapped_feet])
+        player_dist_m = np.array([
+            min_player_distance(metric[i], player_feet_metric[i]) for i in range(len(frame_ids))
+        ])
+
         # --- key moments (Task 4) ---
-        km = detect_key_moments(metric[:, :2], fps, frame_offset=frame_ids[0])
+        # Real tracks are noisier than the synthetic arrays this is unit-tested
+        # against, so denoise each axis before detection; the trajectory fit
+        # below still uses the raw (unsmoothed) metric_track.
+        smoothed_xy = np.column_stack([smooth_signal(metric[:, 0]), smooth_signal(metric[:, 1])])
+        km = detect_key_moments(
+            smoothed_xy, fps, frame_offset=frame_ids[0],
+            taker_dist_m=player_dist_m, player_dist_m=player_dist_m,
+        )
+        method = "elastic" if len(smoothed_xy) >= 25 else "threshold"
+        print(f"moments   : detector={method} (ELASTIC-style scoring on tracks >= 25 frames)")
+        km_no_gate = detect_key_moments(smoothed_xy, fps, frame_offset=frame_ids[0])
         if km is None:
             print("moments   : no kick detected -- fall back to manual moment tagging")
+            if km_no_gate is not None:
+                print(f"moments   : (without the taker-foot gate, frame {km_no_gate.t_kick_frame} "
+                      "would have matched -- check player detections/H near that frame)")
             summary["key_moments"] = None
         else:
             t_c = km.t_contact_frame
             print(f"moments   : t_kick=frame {km.t_kick_frame} ({km.t_kick_frame/fps:.2f}s)  "
                   f"t_contact={('frame ' + str(t_c) + f' ({t_c/fps:.2f}s)') if t_c is not None else 'None'}")
             summary["key_moments"] = {"t_kick_frame": km.t_kick_frame, "t_contact_frame": t_c}
+            if km_no_gate is not None and km_no_gate.t_kick_frame != km.t_kick_frame:
+                print(f"moments   : taker-foot gate rejected an earlier candidate at "
+                      f"frame {km_no_gate.t_kick_frame}")
 
         # --- trajectory fit (Task 3) over kick -> contact window if available ---
         if km is not None:

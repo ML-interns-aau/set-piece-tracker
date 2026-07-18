@@ -3,6 +3,33 @@
 Vendored external code. Kept here (not in `src/`) so its licence and provenance
 stay clearly separated from our own code.
 
+## ELASTIC
+
+- **Source:** https://github.com/hyunsungkim-ds/elastic (paper: *"ELASTIC:
+  Event-Tracking Data Synchronization in Soccer Without Annotated Event
+  Locations"*, Kim et al., MLSA 2025). See `ELASTIC/VENDORED.md` for the exact
+  commit and subset.
+- **What it is:** an event/tracking-data synchronizer whose core is a set of
+  moment detectors — it finds the exact frame of a kick, pass, reception, or
+  touch from ball+player trajectories via Savitzky-Golay-smoothed vector
+  acceleration, candidate generation (acceleration peaks + player-distance
+  valleys), hard proximity gates, and weighted linear scoring.
+- **Why it's here (reference-only, not imported):** its detection logic is the
+  basis for our `t_kick`/`t_contact` detectors (FR-010/011). Unlike PnLCalib,
+  it is **not called at runtime**: its entry points require pandas/pandera
+  event-feed DataFrames (SPADL event types, UTC timestamps, named players)
+  that this pipeline — which has no event data — cannot supply. The algorithm
+  is instead ported to plain numpy in `src/geometry/key_moments.py`
+  (`detect_t_kick_elastic` / `detect_t_contact_elastic`) with the two scipy
+  signal primitives it needs re-implemented in `src/geometry/signal.py`
+  (cross-validated against scipy). The vendored copy documents provenance and
+  lets the port be diffed against upstream.
+
+### Licence: MPL-2.0
+
+File-level copyleft; vendored files keep their licence (see `ELASTIC/LICENSE`),
+our port in `src/` is first-party code implementing the published algorithm.
+
 ## PnLCalib
 
 - **Source:** https://github.com/mguti97/PnLCalib (paper: *"No Bells, Just
