@@ -13,6 +13,8 @@ class FootballDetector:
         iou: float = 0.60,
         device: str = "cpu",
     ):
+        if str(device).isdigit():
+            device = f"cuda:{device}"  # torch .to() rejects bare "0"
         self.model = YOLO(model_path)
         self.model.to(device)
         self.CLASS_NAMES_DICT = self.model.model.names

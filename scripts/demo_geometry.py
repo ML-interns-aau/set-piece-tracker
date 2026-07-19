@@ -73,18 +73,26 @@ def read_frame(cap: cv2.VideoCapture, index: int) -> np.ndarray:
     return frame
 
 
-def detect_ball_track(cap, device, conf, max_frames=0):
-    """Detect + smooth the ball across the clip -> list of (frame_idx, u, v, predicted),
-    plus a per-frame dict of player foot points (pixel bottom-center of each player
-    bbox) for the taker-foot / contact-gating cross-checks in key-moment detection.
+def detect_ball_track(cap, device, conf, max_frames=0, ball_model=None):
+    """Detect + smooth the ball across the clip.
 
-    Runs YOLO once per frame and splits person/ball classes ourselves -- the old
-    ``detector.detect_ball`` call ran the same detection internally and discarded
-    the person boxes it already computed.
+    Uses the tiered BallFinder (full-frame -> ROI re-check -> tiled sweep, with a
+    single-ball temporal gate) instead of a plain full-frame YOLO pass -- see
+    ``src/engine/ball_finder.py``. With ``ball_model`` (a dedicated soccer-ball
+    fine-tune, fetch via ``scripts/fetch_ball_weights.sh``), the ball tiers use
+    it while the stock model keeps detecting players.
+
+    Returns ``(track, player_feet_px, tier_counts)``: the smoothed pixel ball
+    track ``(frame_idx, u, v, predicted)``, per-frame player foot points (pixel
+    bottom-centre of each person bbox, for the key-moment taker/contact
+    cross-checks), and the per-tier detection counters for diagnostics.
     """
-    from src.engine.detector import FootballDetector  # lazy: needs torch/ultralytics
+    from src.engine.ball_finder import BallFinder  # lazy: needs torch/ultralytics
 
-    detector = FootballDetector(model_path="yolo11m.pt", conf=conf, device=device)
+    finder = BallFinder(
+        model_path="yolo11m.pt", ball_model_path=ball_model,
+        device=device, ball_conf=conf,
+    )
     smoother = BallSmoother()
     track: list[tuple[int, float, float, bool]] = []
     player_feet_px: dict[int, list[tuple[float, float]]] = {}
@@ -98,20 +106,14 @@ def detect_ball_track(cap, device, conf, max_frames=0):
         ok, frame = cap.read()
         if not ok:
             break
-        detections = detector.detect(frame)
-        balls = detections[detections.class_id == 32]
-        players = detections[detections.class_id == 0]
-        bbox = None
-        if len(balls) > 0:
-            best = int(np.argmax(balls.confidence))
-            bbox = balls.xyxy[best]
+        bbox, players, _tier = finder.process_frame(frame)
         cx, cy, predicted = smoother.update(frame, bbox)
         started = started or (bbox is not None)
         if started:
             track.append((idx, cx, cy, predicted))
-            player_feet_px[idx] = [((x1 + x2) / 2.0, y2) for x1, _, x2, y2 in players.xyxy]
+            player_feet_px[idx] = [((x1 + x2) / 2.0, y2) for x1, _, x2, y2 in players]
         idx += 1
-    return track, player_feet_px
+    return track, player_feet_px, finder.tier_counts
 
 
 def main() -> None:
@@ -120,7 +122,10 @@ def main() -> None:
     ap.add_argument("--frame", type=int, default=0, help="frame index for calibration + corner side")
     ap.add_argument("--no-detect", action="store_true", help="skip ball detection (no torch needed)")
     ap.add_argument("--device", default="cpu", help="YOLO device (cpu / 0 / cuda:0)")
-    ap.add_argument("--conf", type=float, default=0.25, help="ball detection confidence")
+    ap.add_argument("--conf", type=float, default=0.05, help="ball detection confidence floor")
+    ap.add_argument("--ball-model", default=None,
+                    help="dedicated ball-model weights (default: weights/football-ball-detection.pt "
+                         "if present -- fetch with scripts/fetch_ball_weights.sh)")
     ap.add_argument("--max-frames", type=int, default=0, help="cap frames processed (0 = whole clip)")
     ap.add_argument("--overlay", action="store_true", help="also write an annotated overlay.mp4")
     ap.add_argument("--out", default="outputs/demo", help="output directory")
@@ -192,8 +197,19 @@ def main() -> None:
         return
 
     # --- ball detection + smoothing (perception; needs torch) ---
+    ball_model = args.ball_model
+    if ball_model is None:
+        default_weights = Path(__file__).resolve().parents[1] / "weights/football-ball-detection.pt"
+        ball_model = str(default_weights) if default_weights.exists() else None
+    if ball_model is None:
+        print("ball-model : stock yolo11m (COCO sports-ball) -- fetch a soccer fine-tune "
+              "with scripts/fetch_ball_weights.sh")
+    else:
+        print(f"ball-model : {ball_model}")
     try:
-        px_track, player_feet_px = detect_ball_track(cap, args.device, args.conf, args.max_frames)
+        px_track, player_feet_px, tiers = detect_ball_track(
+            cap, args.device, args.conf, args.max_frames, ball_model=ball_model
+        )
     except ImportError as e:
         cap.release()
         raise SystemExit(
@@ -205,6 +221,9 @@ def main() -> None:
         raise SystemExit("too few ball detections -- try a lower --conf or a different clip.")
     n_pred = sum(p[3] for p in px_track)
     print(f"ball      : {len(px_track)} frames with a ball position ({n_pred} predicted/extrapolated)")
+    print(f"ball tiers: full={tiers['full']}  roi={tiers['roi']}  tiled={tiers['tiled']}  "
+          f"miss={tiers['miss']}")
+    summary["ball_detection"] = {"model": ball_model or "yolo11m-coco", "tiers": tiers}
 
     km = None
     metric_track = None
@@ -227,9 +246,8 @@ def main() -> None:
                         for i in range(len(frame_ids))]
 
         # --- nearest-player distance per frame (taker-foot / contact-gating cross-check) ---
-        # Same-frame nearest-player distance only -- this is not the full I5
-        # gap-bridging pipeline (no interpolation/extrapolation across detection
-        # gaps), just enough to exercise the new key-moment gating on real footage.
+        # Same-frame nearest-player distance only -- not the full I5 gap-bridging
+        # pipeline, just enough to drive the key-moment gating on real footage.
         player_feet_metric: list[list[tuple[float, float]]] = []
         for fid in frame_ids:
             feet_px = np.array(player_feet_px.get(fid, []), dtype=np.float64).reshape(-1, 2)
@@ -244,16 +262,15 @@ def main() -> None:
         ])
 
         # --- key moments (Task 4) ---
-        # Real tracks are noisier than the synthetic arrays this is unit-tested
-        # against, so denoise each axis before detection; the trajectory fit
-        # below still uses the raw (unsmoothed) metric_track.
+        # Median-prefilter each axis against single-frame glitches; the trajectory
+        # fit below still uses the raw metric_track.
         smoothed_xy = np.column_stack([smooth_signal(metric[:, 0]), smooth_signal(metric[:, 1])])
+        method = "elastic" if len(smoothed_xy) >= 25 else "threshold"
+        print(f"moments   : detector={method} (ELASTIC-style scoring on tracks >= 25 frames)")
         km = detect_key_moments(
             smoothed_xy, fps, frame_offset=frame_ids[0],
             taker_dist_m=player_dist_m, player_dist_m=player_dist_m,
         )
-        method = "elastic" if len(smoothed_xy) >= 25 else "threshold"
-        print(f"moments   : detector={method} (ELASTIC-style scoring on tracks >= 25 frames)")
         km_no_gate = detect_key_moments(smoothed_xy, fps, frame_offset=frame_ids[0])
         if km is None:
             print("moments   : no kick detected -- fall back to manual moment tagging")

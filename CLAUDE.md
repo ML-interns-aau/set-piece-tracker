@@ -41,7 +41,10 @@ workflow, or exporters exist yet.
 src/
 ├── domain/               # pure types: Calibration, CalibrationTrack, KeyMoments, ProjectileFit, pitch model
 ├── engine/               # perception skeleton (YOLO detect, ByteTrack, team+GK) — → will move to src/perception/
-│   ├── detector.py       # FootballDetector — YOLO person+ball detection
+│   ├── detector.py       # FootballDetector — YOLO person+ball detection (single full-frame pass)
+│   ├── ball_finder.py    # BallFinder — tiered ball detection: full-frame → ROI re-check → tiled
+│   │                     #   sweep + single-ball temporal gate; optional dedicated ball model
+│   │                     #   (roboflow/sports YOLOv8x fine-tune, scripts/fetch_ball_weights.sh)
 │   ├── tracker.py        # FootballTracker  — ByteTrack multi-object tracking
 │   └── team_classifier.py# TeamClassifier   — team split + goalkeeper detection (FR-005)
 └── geometry/             # DONE: orientation, calibration, ball trajectory, key moments
@@ -352,6 +355,13 @@ Contracts between planes; keep these stable. `player`/`ball` classes, pixel bbox
 - **Python 3.14.** Runtime dependencies live in `requirements.txt`.
 - **YOLO weights:** code defaults to `yolo11m.pt`. Weights are not committed; the pilot
   phase (PRD Phase 2) decides which weights to standardize on before batch runs.
+- **Ball weights (recommended):** stock COCO YOLO barely detects the ~5–15 px broadcast
+  ball. `bash scripts/fetch_ball_weights.sh` fetches `weights/football-ball-detection.pt`
+  (roboflow/sports YOLOv8x fine-tuned on broadcast soccer; AGPL-3.0 regime via ultralytics,
+  which is already a dependency). `BallFinder` picks it up via `--ball-model` /
+  auto-detection; without it, the tiered detector still improves recall substantially
+  (low conf floor + ROI re-check + tiled sweep + temporal gate, non-agnostic NMS so a
+  person box can't suppress the dead ball at the taker's feet).
 - **PnLCalib (calibration) weights:** the vendored calibrator needs `SV_kp` + `SV_lines`
   (~506 MB) in `third_party/PnLCalib/weights/` — git-ignored, download per
   `third_party/README.md`. Its extra runtime deps (scipy, shapely, matplotlib, PyYAML) are
